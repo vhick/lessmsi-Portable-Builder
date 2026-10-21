@@ -1,4 +1,4 @@
-# lessmsi True Portable Builder v1.0
+# lessmsi True Portable Builder v1.1
 
 **Upstream:** https://github.com/activescott/lessmsi  
 **Initial stable release:** v2.12.9 (2026-04-02)  
@@ -12,7 +12,7 @@
 3. Checks out the **same release tag** from the official lessmsi repository.
 4. Replaces **only the GUI settings implementation**, so Recent Files and window preferences live in `Data/Settings/lessmsi.settings.xml` instead of Windows `user.config`.
 5. Rebuilds the GUI and Core library with matching release assembly versions, and disables the permanent Windows Explorer context-menu registration at source level and omits its helper binary.
-6. Builds the patched GUI with MSBuild. The official release supplies CLI and all supporting dependencies.
+6. Restores the x86 CAB extraction dependency to a fixed NuGet folder, passes the actual solution directory to MSBuild, then builds the patched GUI. The official release supplies the CLI and other packaged dependencies.
 7. Compiles `lessmsiPortable.exe` with the upstream application's *actual icon*, and writes `App/AppInfo/appinfo.ini` plus PNG menu icons.
 8. Packages the complete portable folder into an additional ZIP, ready to extract into your PortableApps directory.
 
@@ -44,6 +44,8 @@ lessmsiPortable/
       lessmsi-gui.exe       (patched GUI)
       lessmsi.exe           (official CLI)
       lessmsi.core.dll      (matching rebuilt Core library)
+      mspack.dll            (verified x86 native CAB extractor)
+      libmspackn.dll        (CAB extraction .NET wrapper)
       (official dependencies and languages)
   Data/
     Settings/
@@ -69,6 +71,10 @@ Only overwrite `lessmsiPortable.exe`, `App/`, and `Other/` using files from the 
 - The root launcher depends on .NET Framework 4.8, just as the upstream application does.
 - Source-level patches may need updating if upstream changes how preferences are stored; the build deliberately fails safely rather than silently switching to a nonportable version.
 - Windows app execution traces and normal system caches are outside this app's control.
+
+## Fix in v1.1
+
+The v1.0 Windows GitHub run compiled the source successfully but stopped at the upstream post-build `xcopy` of `mspack.dll` (MSB3073, code 4). That `.csproj` uses `$(SolutionDir)` without a fixed value when MSBuild is invoked directly on the project. v1.1 explicitly restores packages to `src/packages`, specifies the solution directory in the MSBuild command, verifies the x86 native dependency before/after compilation, and includes `mspack.dll` and `libmspackn.dll` in the final package. The MSI extraction engine is not disabled or stubbed.
 
 ## Verification status
 

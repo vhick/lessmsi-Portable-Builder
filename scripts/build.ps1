@@ -55,15 +55,36 @@ if (-not $nuget) {
     $nugetPath = Join-Path $work 'nuget.exe'
     Invoke-WebRequest -Uri 'https://dist.nuget.org/win-x86-commandline/latest/nuget.exe' -OutFile $nugetPath
 } else { $nugetPath = $nuget.Source }
-& $nugetPath restore $solution -NonInteractive -Verbosity quiet
+# lessmsi uses packages.config and a post-build xcopy pointing to
+# $(SolutionDir)packages\libmspack4n.0.9.10\build\x86\mspack.dll.
+# Restore to the same explicit folder and fail *before* compilation if absent.
+$solutionDir = (Join-Path $source 'src') + '\'
+$packagesDir = Join-Path $source 'src/packages'
+& $nugetPath restore $solution -PackagesDirectory $packagesDir -NonInteractive -Verbosity quiet
 if ($LASTEXITCODE -ne 0) { throw 'NuGet restore failed.' }
+$nativeCab = Join-Path $packagesDir 'libmspack4n.0.9.10/build/x86/mspack.dll'
+$managedCab = Join-Path $packagesDir 'libmspack4n.0.9.10/lib/net40/libmspackn.dll'
+foreach ($dependency in @($nativeCab, $managedCab)) {
+    if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
+        throw "Required upstream NuGet dependency missing: $dependency"
+    }
+}
+Write-Host "Verified restored native CAB extractor: $nativeCab"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $vswhere)) { throw 'Visual Studio vswhere.exe is unavailable on the runner.' }
 $msbuildPaths = @(& $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe')
 if ($msbuildPaths.Count -lt 1) { throw 'MSBuild.exe not found.' }
 $msbuild = $msbuildPaths[0]
-& $msbuild (Join-Path $source 'src/LessMsi.Gui/LessMsi.Gui.csproj') /m /p:Configuration=Release /p:Platform=x86 /verbosity:minimal /nologo
+# The upstream GUI .csproj has a post-build xcopy using $(SolutionDir).
+# When MSBuild is invoked on a project rather than on its .sln, SolutionDir
+# otherwise defaults to a relative path and xcopy cannot find mspack.dll.
+$solutionProperty = '/p:SolutionDir=' + $solutionDir
+& $msbuild (Join-Path $source 'src/LessMsi.Gui/LessMsi.Gui.csproj') /m /p:Configuration=Release /p:Platform=x86 $solutionProperty /verbosity:minimal /nologo
 if ($LASTEXITCODE -ne 0) { throw 'Upstream source build with portable settings patch failed.' }
+$rebuiltNativeCab = Join-Path $source 'src/LessMsi.Gui/bin/Release/mspack.dll'
+if (-not (Test-Path -LiteralPath $rebuiltNativeCab -PathType Leaf)) {
+    throw 'Upstream GUI build succeeded but did not copy mspack.dll. Check the post-build event and SolutionDir.'
+}
 
 $compiled = @(Get-ChildItem -Path (Join-Path $source 'src/LessMsi.Gui/bin') -File -Filter 'lessmsi-gui.exe' -Recurse | Where-Object { $_.FullName -match '[\\/]Release[\\/]' })
 if ($compiled.Count -ne 1) { throw "Could not locate exactly one patched GUI executable; found $($compiled.Count)." }
@@ -79,6 +100,13 @@ Copy-Item -LiteralPath $compiled[0].FullName -Destination (Join-Path $app 'lessm
 $coreDll = Join-Path $source 'src/LessMsi.Core/bin/Release/lessmsi.core.dll'
 if (-not (Test-Path $coreDll)) { throw 'Rebuilt lessmsi.core.dll not found.' }
 Copy-Item -LiteralPath $coreDll -Destination (Join-Path $app 'lessmsi.core.dll') -Force
+# The GUI is rebuilt as x86. Bundle the matching native x86 CAB extractor
+# from the restored official NuGet package, rather than depending on the
+# release ZIP having a copy or on the runner's PATH.
+Copy-Item -LiteralPath $rebuiltNativeCab -Destination (Join-Path $app 'mspack.dll') -Force
+if (-not (Test-Path -LiteralPath (Join-Path $app 'libmspackn.dll'))) {
+    Copy-Item -LiteralPath $managedCab -Destination (Join-Path $app 'libmspackn.dll') -Force
+}
 # Prevent manual execution of the Explorer registration helper as an extra defense.
 $helper = Join-Path $app 'AddWindowsExplorerShortcut.exe'
 if (Test-Path $helper) { Remove-Item -LiteralPath $helper -Force }
@@ -133,7 +161,7 @@ Copy-Item (Join-Path $kit 'README.md') (Join-Path $sourceInfo 'BUILDER-README.md
 Copy-Item (Join-Path $kit 'patches/Settings.Designer.cs') (Join-Path $sourceInfo 'Settings.Designer.cs')
 Copy-Item (Join-Path $kit 'launcher/lessmsiPortable.cs') (Join-Path $sourceInfo 'lessmsiPortable.cs')
 Copy-Item (Join-Path $source 'src/LICENSE') (Join-Path $sourceInfo 'UPSTREAM-LICENSE.txt')
-Set-Content -LiteralPath (Join-Path $sourceInfo 'BUILD-INFO.txt') -Value "upstream=$tag`nsha256=$actualHash`nbuilder=1.0`n" -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $sourceInfo 'BUILD-INFO.txt') -Value "upstream=$tag`nsha256=$actualHash`nbuilder=1.1`n" -Encoding UTF8
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit 'scripts/verify.ps1') -AppRoot $parent
 if ($LASTEXITCODE -ne 0) { throw 'Portable package verification failed.' }
 $zip = Join-Path $dist "lessmsiPortable-$version.zip"

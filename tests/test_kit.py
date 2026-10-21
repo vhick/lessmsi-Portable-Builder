@@ -61,6 +61,25 @@ class BuilderTests(unittest.TestCase):
         self.assertIn('CommonAssemblyInfo.cs', text)
         self.assertIn('AssemblyVersion', text)
 
+    def test_upstream_native_dependency_is_explicitly_restored_and_included(self):
+        build = (ROOT / 'scripts/build.ps1').read_text(encoding='utf-8')
+        verify = (ROOT / 'scripts/verify.ps1').read_text(encoding='utf-8')
+        self.assertIn('-PackagesDirectory $packagesDir', build)
+        self.assertIn("$solutionProperty = '/p:SolutionDir=' + $solutionDir", build)
+        self.assertIn('libmspack4n.0.9.10/build/x86/mspack.dll', build)
+        self.assertIn('libmspack4n.0.9.10/lib/net40/libmspackn.dll', build)
+        self.assertIn('$rebuiltNativeCab', build)
+        self.assertIn("Join-Path $app 'mspack.dll'", build)
+        self.assertIn("Join-Path $app 'libmspackn.dll'", build)
+        self.assertIn('App/LessMsi/mspack.dll', verify)
+        self.assertIn('App/LessMsi/libmspackn.dll', verify)
+
+    def test_builder_version_is_updated(self):
+        build = (ROOT / 'scripts/build.ps1').read_text(encoding='utf-8')
+        readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+        self.assertIn('builder=1.1', build)
+        self.assertIn('Builder v1.1', readme)
+
     def test_no_automatic_registry_or_msi_installation(self):
         build = (ROOT/'scripts/build.ps1').read_text(encoding='utf-8')
         self.assertNotIn('msiexec /i', build.lower())
