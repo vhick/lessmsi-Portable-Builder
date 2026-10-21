@@ -1,0 +1,43 @@
+name: Build lessmsi Portable (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Stable upstream tag, or latest'
+        required: true
+        default: 'latest'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows portable build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Get builder files
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Validate builder files
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build source-patched portable ZIP
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -ReleaseTag $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload actual portable ZIP
+        uses: actions/upload-artifact@v6
+        with:
+          name: lessmsiPortable-${{ inputs.release_tag }}
+          path: _dist/lessmsiPortable-*.zip
+          if-no-files-found: error
+          retention-days: 1
